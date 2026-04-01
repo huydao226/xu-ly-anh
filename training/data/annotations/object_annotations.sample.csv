@@ -1,0 +1,3 @@
+image_path,label,x_min,y_min,x_max,y_max,split
+/Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/raw_sessions/demo_session/images/frame_000010.jpg,phone,430,250,515,455,train
+/Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/raw_sessions/demo_session/images/frame_000015.jpg,notes,80,260,260,470,val

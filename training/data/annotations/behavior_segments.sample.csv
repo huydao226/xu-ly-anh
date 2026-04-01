@@ -1,0 +1,3 @@
+session_id,start_frame,end_frame,label,split,notes
+demo_session,1,45,normal,train,hanh vi binh thuong trong 3 giay
+demo_session,46,90,look_away,val,quay sang trai va nhin lech man hinh
