@@ -24,8 +24,16 @@ training/data/raw_videos/**
 training/data/processed/**
 training/models/**
 training/reports/**
+training/data/external/oep_multiview/raw/**
+training/data/external/single_camera_finetune/raw_videos/**
+training/data/external/single_camera_finetune/raw_images/**
 !training/data/raw_sessions/.gitkeep
 !training/data/raw_videos/.gitkeep
 !training/data/processed/.gitkeep
 !training/models/.gitkeep
 !training/reports/.gitkeep
+!training/data/external/oep_multiview/raw/.gitkeep
+!training/data/external/oep_multiview/notes/.gitkeep
+!training/data/external/single_camera_finetune/raw_videos/.gitkeep
+!training/data/external/single_camera_finetune/raw_images/.gitkeep
+!training/data/external/single_camera_finetune/annotations/.gitkeep

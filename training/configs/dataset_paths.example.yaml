@@ -1,0 +1,13 @@
+project_dataset:
+  raw_sessions: /Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/raw_sessions
+  object_annotations_csv: /Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/annotations/object_annotations.csv
+  behavior_segments_csv: /Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/annotations/behavior_segments.csv
+
+external_reference_datasets:
+  oep_multiview_raw: /Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/external/oep_multiview/raw
+  oep_notes: /Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/external/oep_multiview/notes
+
+single_camera_finetune_dataset:
+  raw_videos: /Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/external/single_camera_finetune/raw_videos
+  raw_images: /Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/external/single_camera_finetune/raw_images
+  annotations_dir: /Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/external/single_camera_finetune/annotations
