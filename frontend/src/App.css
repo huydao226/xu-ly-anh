@@ -13,6 +13,13 @@
   margin: 0 auto;
 }
 
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 22px;
+  align-items: start;
+}
+
 .topbar,
 .dashboard,
 .hero-grid,
@@ -21,7 +28,10 @@
 .bottom-grid,
 .button-row,
 .summary-grid,
-.overview-stats {
+.overview-stats,
+.health-stack,
+.feature-grid,
+.dock-service-list {
   display: grid;
 }
 
@@ -30,6 +40,10 @@
   gap: 24px;
   align-items: end;
   margin-bottom: 28px;
+}
+
+.health-stack {
+  gap: 12px;
 }
 
 .eyebrow,
@@ -92,8 +106,15 @@
 }
 
 .hero-grid {
-  grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
   gap: 22px;
+}
+
+.hero-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.oep-hero-grid {
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
 }
 
 .panel {
@@ -117,8 +138,7 @@
   margin: 8px 0 0;
 }
 
-.intro-panel,
-.control-panel {
+.intro-panel {
   height: 100%;
 }
 
@@ -177,6 +197,17 @@
   gap: 10px;
 }
 
+.overview-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.overview-metrics-four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .feature-chip {
   border-radius: 999px;
   padding: 10px 14px;
@@ -220,6 +251,11 @@
   gap: 12px;
 }
 
+.dock-button-stack {
+  display: grid;
+  gap: 10px;
+}
+
 button {
   border: none;
   border-radius: 16px;
@@ -235,9 +271,18 @@ button.secondary {
   background: linear-gradient(135deg, #6ad8ff, #57a0ff);
 }
 
+button.tertiary {
+  background: linear-gradient(135deg, #93f68f, #47c978);
+}
+
 button.ghost {
   background: rgba(255, 255, 255, 0.08);
   color: #eff6fd;
+}
+
+button.compact-button {
+  padding: 10px 14px;
+  font-size: 0.9rem;
 }
 
 button:disabled {
@@ -273,6 +318,13 @@ button:disabled {
   min-height: 170px;
 }
 
+.metric-card-inline {
+  min-height: 0;
+  padding: 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
 .metric-card strong {
   display: block;
   font-size: 2rem;
@@ -284,9 +336,13 @@ button:disabled {
   gap: 22px;
 }
 
+.camera-grid-priority .panel {
+  padding-bottom: 20px;
+}
+
 .video-frame {
   aspect-ratio: 16 / 10;
-  border-radius: 20px;
+  border-radius: 0;
   overflow: hidden;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.01)),
@@ -313,6 +369,84 @@ button:disabled {
 .bottom-grid {
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
   gap: 22px;
+}
+
+.oep-bottom-grid {
+  grid-template-columns: 1fr;
+}
+
+.control-dock {
+  position: sticky;
+  top: 24px;
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 24px;
+}
+
+.control-dock-header {
+  display: grid;
+  gap: 14px;
+}
+
+.control-dock-header h2 {
+  margin: 8px 0 0;
+  font-size: 1.25rem;
+}
+
+.dock-mini-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dock-mini-stats-wide {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dock-mini-stats div {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dock-mini-stats span {
+  color: #93a8bc;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.dock-mini-stats strong {
+  font-size: 1rem;
+}
+
+.dock-status-box {
+  padding: 14px;
+}
+
+.dock-service-list {
+  gap: 10px;
+}
+
+.dock-service-list div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.dock-service-list span {
+  color: #93a8bc;
+  font-size: 0.82rem;
+}
+
+.dock-screen-button {
+  width: 100%;
 }
 
 .wide-panel {
@@ -349,6 +483,50 @@ button:disabled {
   padding: 14px 16px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.04);
+}
+
+.probability-list {
+  display: grid;
+  gap: 14px;
+}
+
+.probability-item {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.probability-item p,
+.probability-item span {
+  margin: 0;
+}
+
+.probability-item div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.probability-bar {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.probability-bar span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #75d8ff, #8ff6a5);
+}
+
+.feature-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
 }
 
 .log-panel {
@@ -439,15 +617,24 @@ button:disabled {
 }
 
 @media (max-width: 1180px) {
+  .workspace,
   .hero-grid,
   .camera-grid,
   .metrics-grid,
+  .overview-metrics,
+  .overview-metrics-four,
   .bottom-grid,
   .button-row,
   .topbar,
   .summary-grid,
-  .overview-stats {
+  .overview-stats,
+  .feature-grid {
     grid-template-columns: 1fr;
+  }
+
+  .control-dock {
+    position: static;
+    order: -1;
   }
 
   .wide-panel {

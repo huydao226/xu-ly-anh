@@ -1,9 +1,9 @@
 {
-  "oep_root": "/Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/external/oep_multiview/raw/OEP database",
+  "oep_root": "C:\\Users\\huydao\\.cache\\kagglehub\\datasets\\raajanwankhade\\oep-dataset\\versions\\1\\OEP database",
   "subject_count": 24,
   "segment_count": 565,
   "acting_subject_count": 15,
   "real_exam_subject_count": 9,
-  "webcam_segments_csv": "/Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/external/oep_multiview/notes/oep_webcam_segments.csv",
-  "subject_manifest_csv": "/Users/huy.dao/XuLyAnh/anti-cheat-demo/training/data/external/oep_multiview/notes/oep_subject_manifest.csv"
+  "webcam_segments_csv": "D:\\xu-ly-anh\\training\\data\\external\\oep_multiview\\notes\\oep_webcam_segments.csv",
+  "subject_manifest_csv": "D:\\xu-ly-anh\\training\\data\\external\\oep_multiview\\notes\\oep_subject_manifest.csv"
 }
