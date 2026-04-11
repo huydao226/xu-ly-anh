@@ -341,14 +341,14 @@ Ngoài ra, nên ưu tiên chia theo người thay vì chia ngẫu nhiên từng 
 
 ## 12. Phần huấn luyện AI đã bổ sung trong repo
 
-### 12.1 Huấn luyện theo pipeline OEP
+### 12.1 Pipeline huấn luyện OEP đang dùng
 
-Repo hiện đã bổ sung pipeline huấn luyện theo hướng:
+Ở trạng thái hiện tại, repo đang dùng pipeline `OEP-first` để tạo model temporal cho màn hình monitor mới:
 
-- `Stage 1`: train baseline trên `OEP multi-view`
-- `Stage 2`: train lại trên `OEP webcam-only`
-- `Stage 3`: đánh giá trên `OEP webcam-only holdout`
-- `Stage 4`: self-test trên webcam thật của nhóm
+- build dataset từ `training/data/external/oep_multiview/raw/OEP database`
+- tạo temporal dataset webcam-only v3 tại `training/data/processed/oep_webcam_temporal_v3_splitfix.jsonl`
+- train model LSTM và lưu tại `training/models/oep_webcam_monitor_v3`
+- deploy model này cho OEP service ở cổng `8001`
 
 Dataset OEP sau khi giải nén cho thấy:
 
@@ -358,38 +358,113 @@ Dataset OEP sau khi giải nén cho thấy:
 
 Để hỗ trợ bài toán có cả lớp `normal`, pipeline hiện tại tự suy ra thêm các đoạn không bị gán nhãn cheating từ khoảng trống giữa các sự kiện. Kết quả tạo thêm được `262` sample `normal`, nâng tổng số sample temporal lên `827`.
 
-### 12.2 Fine-tune YOLO
+### 12.2 Cấu hình train của monitor v3
+
+Model đang được dùng bởi service là `oep_webcam_monitor_v3`. Các thông số huấn luyện chính được lưu trong `training/models/oep_webcam_monitor_v3/metrics.json` gồm:
+
+- dataset: `training/data/processed/oep_webcam_temporal_v3_splitfix.jsonl`
+- số sample: `827`
+- số lớp train: `3`
+  - `normal`
+  - `suspicious_action`
+  - `device`
+- số feature mỗi frame: `19`
+- số epoch: `24`
+- hidden size của `LSTM`: `64`
+- learning rate: `0.0007`
+- weight decay: `0.0001`
+- balanced sampler: không sử dụng ở model tốt nhất hiện tại
+- class weights: tắt, tức `class_weights = [1.0, 1.0, 1.0]`
+- non-normal threshold khi suy luận: `0.55`
+
+Cách chia tập hiện tại theo `subject` là:
+
+- `train = 537`
+- `validation = 153`
+- `test = 137`
+
+Phân bố lớp theo split:
+
+- Train
+  - `suspicious_action = 324`
+  - `normal = 207`
+  - `device = 6`
+- Validation
+  - `suspicious_action = 82`
+  - `normal = 63`
+  - `device = 8`
+- Test
+  - `suspicious_action = 92`
+  - `normal = 44`
+  - `device = 1`
+
+Lệnh train tương ứng:
+
+```bash
+python training/scripts/train_temporal_model.py \
+  --dataset training/data/processed/oep_webcam_temporal_v3_splitfix.jsonl \
+  --output-dir training/models/oep_webcam_monitor_v3 \
+  --epochs 24 \
+  --batch-size 16 \
+  --seed 21 \
+  --disable-class-weights
+```
+
+### 12.3 Bộ đặc trưng của OEP monitor v3
+
+Khác với baseline cũ, monitor v3 hiện trích `19` đặc trưng cho mỗi frame. Các đặc trưng này được xây từ `face`, `eye` và `upper-body`:
+
+- độ sáng trung bình
+- mức thay đổi khung hình theo thời gian
+- mật độ cạnh ảnh
+- cờ có mặt hay không có mặt
+- tỷ lệ diện tích khuôn mặt
+- vị trí tâm khuôn mặt theo trục `x`
+- vị trí tâm khuôn mặt theo trục `y`
+- cờ phát hiện được cặp mắt
+- tỷ lệ khoảng cách giữa hai mắt
+- `yaw proxy`
+- `pitch proxy`
+- `eye open ratio`
+- mật độ cạnh ở nửa dưới khuôn mặt
+- cờ nhiều khuôn mặt
+- cờ phát hiện upper-body
+- tỷ lệ diện tích upper-body
+- vị trí tâm upper-body theo trục `x`
+- vị trí tâm upper-body theo trục `y`
+- quan hệ giữa face và body
+
+Những feature này được gom thành chuỗi `16` frame và đưa vào mô hình `LSTM`.
+
+### 12.4 Cấu hình runtime của OEP service
+
+Để demo ổn định hơn, phần runtime của service `8001` đang dùng các ngưỡng sau:
+
+- `SEQUENCE_FRAMES = 16`
+- `MIN_FRAMES_TO_PREDICT = 8`
+- `OFFSCREEN_STREAK_THRESHOLD = 6`
+- `DEVICE_CONFIDENCE_THRESHOLD = 0.7`
+- `DEVICE_HOLD_FRAMES = 12`
+
+Thiết kế runtime hiện tại được tách thành hai lớp:
+
+- temporal model học `normal`, `suspicious_action`, `device`
+- rule runtime riêng cho `absence/offscreen`
+
+Ngoài ra, lớp `device` vẫn được giữ theo hướng practical cho demo:
+
+- mô hình temporal có thể học nhãn `device` từ OEP
+- nhưng khi YOLO runtime thấy `phone`, service vẫn ưu tiên override thành `device`
+- `hold frames` được tăng lên để nhãn `device` giữ ổn định đủ lâu cho giao diện demo
+
+### 12.5 Fine-tune YOLO trong giai đoạn sau
+
+Phần fine-tune object detector vẫn được giữ trong repo để phục vụ giai đoạn sau trên dữ liệu riêng của đề tài, với các lớp dự kiến:
 
 - `phone`
 - `notes`
 - `second_person`
 - `calculator`
-
-Phần này vẫn được giữ trong repo để phục vụ giai đoạn fine-tune sau trên dữ liệu riêng của đề tài.
-
-### 12.3 Train temporal model
-
-Đối với OEP, hệ thống không dùng `metadata.jsonl` từ demo mà trích trực tiếp đặc trưng từ video webcam và wearcam. Bộ đặc trưng hiện tại gồm:
-
-- độ sáng trung bình
-- mức thay đổi khung hình theo thời gian
-- mật độ cạnh ảnh
-- số khuôn mặt
-- tỷ lệ diện tích khuôn mặt
-- vị trí trung tâm khuôn mặt
-
-Với `OEP webcam-only`, vector đặc trưng có `7` chiều cho mỗi frame lấy mẫu.
-
-Với `OEP multi-view`, vector đặc trưng có `14` chiều vì ghép cả webcam và wearcam.
-
-Những feature này được gom thành sequence và đưa vào mô hình `LSTM`.
-
-Mục tiêu của temporal model là giảm sai số trong các tình huống:
-
-- chớp mắt ngắn
-- quay đầu rất nhanh
-- chỉnh tư thế ngồi
-- cúi xuống ngắn không phải gian lận
 
 ## 13. Kết quả bước đầu
 
@@ -401,27 +476,56 @@ Mục tiêu của temporal model là giảm sai số trong các tình huống:
 - pipeline dữ liệu ban đầu cho bài toán huấn luyện AI
 - pipeline huấn luyện temporal hoạt động được trên OEP
 
-Kết quả chạy thử trên OEP:
+Kết quả huấn luyện của `oep_webcam_monitor_v3`:
 
-- `OEP webcam-only`
-  - số sample: `827`
-  - số lớp: `6`
-  - `best validation accuracy`: khoảng `30.54%`
-  - `test accuracy`: khoảng `28.17%`
-- `OEP multi-view`
-  - số sample: `827`
-  - số lớp: `6`
-  - `best validation accuracy`: khoảng `35.93%`
-  - `test accuracy`: khoảng `26.76%`
+- số sample: `827`
+- số lớp: `3`
+- `best validation accuracy`: `64.71%`
+- `validation accuracy` sau threshold: `65.36%`
+- `test accuracy`: `72.26%`
+- `test accuracy` sau threshold: `70.80%`
+- `test macro F1` sau threshold: `42.91%`
 
 Nhận xét bước đầu:
 
-- việc thêm `wearcam` giúp validation accuracy tăng ở giai đoạn tốt nhất
-- tuy nhiên test accuracy vẫn còn thấp, cho thấy baseline hiện tại mới ở mức khởi đầu
-- nguyên nhân chính là đặc trưng còn đơn giản, chưa tận dụng audio, chưa dùng detector mạnh hơn và chưa map lại nhãn OEP sang taxonomy sát bài toán của đề tài
-- dù vậy, kết quả này vẫn chứng minh rằng repo đã có phần `training AI` thật, không chỉ dừng ở mức lý thuyết hoặc heuristic demo
+- việc rút taxonomy về `3` lớp giúp model ổn định hơn nhiều so với baseline nhiều lớp trước đó
+- `suspicious_action` là lớp mạnh nhất hiện tại, phù hợp với mục tiêu demo hành vi đáng ngờ
+- `device` trong thực tế vẫn cần kết hợp YOLO runtime để ra nhãn ổn định trên giao diện, vì lớp này rất hiếm trong tập temporal
+- `normal` vẫn là lớp nhạy cảm nhất khi segment OEP bị mất cả `face` và `upper-body` ở cuối chuỗi
+- dù vậy, kết quả này đã chứng minh repo có phần `training AI` thật, có mô hình được train, lưu metrics, và deploy vào service
 
 Điều này cho thấy đề tài đã vượt qua mức một bản demo giao diện đơn thuần và bắt đầu có nền tảng cho nghiên cứu AI.
+
+### 13.1 Kết quả test end-to-end của OEP service
+
+Sau khi train và nạp model vào service `8001`, hệ thống đã được test end-to-end qua API với bốn nhóm tình huống:
+
+- `normal`
+- `suspicious_action`
+- `device`
+- `absence/offscreen`
+
+Kết quả test với các sample OEP đã chọn cho demo:
+
+- `normal`
+  - temporal model mới nhạy hơn với nhóm `suspicious_action`, nên sample demo cần tiếp tục được tinh chỉnh cùng `frontal normal guard`
+  - trong runtime hiện tại, các case nhìn thẳng camera vẫn được kéo về `normal` nhờ bước merge và rule bổ trợ
+- `suspicious_action`
+  - sample: `subject5 / Muath1.avi / 796-798s`
+  - temporal model vẫn giữ ổn định nhãn `suspicious_action` ở các sample hành vi bất thường rõ
+- `device`
+  - lớp `device` hiện được giữ ổn định chủ yếu nhờ YOLO runtime override, không còn phụ thuộc vào temporal model
+- `absence/offscreen`
+  - dùng frame đen để mô phỏng mất cả `face` và `upper-body`
+  - từ frame `8` bắt đầu lên `absence/offscreen`
+  - confidence tăng dần từ `65%` đến `85%`
+
+Kết quả này xác nhận:
+
+- `normal` không bị nhảy sang `device`
+- `suspicious_action` không bị `absence/offscreen` cướp lớp ở sample đã chọn
+- `device` giữ đủ lâu để UI demo quan sát được nhãn
+- `absence/offscreen` vẫn hoạt động đúng sau khi tinh chỉnh `DEVICE_HOLD_FRAMES`
 
 ## 14. Hạn chế và hướng phát triển
 

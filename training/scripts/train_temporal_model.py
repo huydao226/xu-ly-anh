@@ -29,6 +29,12 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument('--seed', type=int, default=42)
   parser.add_argument('--max-frames', type=int, default=90)
   parser.add_argument('--balanced-sampler', action='store_true')
+  parser.add_argument('--model-type', type=str, choices=['lstm', 'gru'], default='lstm')
+  parser.add_argument('--num-layers', type=int, default=1)
+  parser.add_argument('--bidirectional', action='store_true')
+  parser.add_argument('--dropout', type=float, default=0.2)
+  parser.add_argument('--disable-class-weights', action='store_true')
+  parser.add_argument('--class-weight-power', type=float, default=0.5)
   parser.add_argument('--min-threshold', type=float, default=0.35)
   parser.add_argument('--max-threshold', type=float, default=0.75)
   parser.add_argument('--threshold-step', type=float, default=0.01)
@@ -79,13 +85,13 @@ def compute_feature_stats(samples: list[dict], max_frames: int) -> tuple[list[fl
   return mean.tolist(), std.tolist()
 
 
-def make_class_weights(samples: list[dict], num_classes: int) -> list[float]:
+def make_class_weights(samples: list[dict], num_classes: int, power: float = 0.5) -> list[float]:
   counts = Counter(int(sample['label_id']) for sample in samples)
   total = sum(counts.values())
   weights: list[float] = []
   for class_id in range(num_classes):
     count = counts.get(class_id, 1)
-    weights.append((total / float(num_classes * count)) ** 0.5)
+    weights.append((total / float(num_classes * count)) ** power)
   return weights
 
 
@@ -136,14 +142,45 @@ def collate_batch(items: list[BatchItem]) -> tuple[torch.Tensor, torch.Tensor, t
   return features, labels, lengths
 
 
-class LSTMClassifier(nn.Module):
-  def __init__(self, input_size: int, hidden_size: int, num_classes: int) -> None:
+class TemporalClassifier(nn.Module):
+  def __init__(
+    self,
+    input_size: int,
+    hidden_size: int,
+    num_classes: int,
+    *,
+    model_type: str = 'lstm',
+    num_layers: int = 1,
+    bidirectional: bool = False,
+    dropout: float = 0.2,
+  ) -> None:
     super().__init__()
-    self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, batch_first=True)
+    recurrent_dropout = dropout if num_layers > 1 else 0.0
+    if model_type == 'gru':
+      self.recurrent = nn.GRU(
+        input_size=input_size,
+        hidden_size=hidden_size,
+        batch_first=True,
+        num_layers=num_layers,
+        dropout=recurrent_dropout,
+        bidirectional=bidirectional,
+      )
+    else:
+      self.recurrent = nn.LSTM(
+        input_size=input_size,
+        hidden_size=hidden_size,
+        batch_first=True,
+        num_layers=num_layers,
+        dropout=recurrent_dropout,
+        bidirectional=bidirectional,
+      )
+    head_input_size = hidden_size * (2 if bidirectional else 1)
+    self.model_type = model_type
+    self.bidirectional = bidirectional
     self.head = nn.Sequential(
-      nn.Linear(hidden_size, hidden_size),
+      nn.Linear(head_input_size, hidden_size),
       nn.ReLU(),
-      nn.Dropout(p=0.2),
+      nn.Dropout(p=dropout),
       nn.Linear(hidden_size, num_classes),
     )
 
@@ -154,8 +191,14 @@ class LSTMClassifier(nn.Module):
       batch_first=True,
       enforce_sorted=False,
     )
-    _, (hidden, _) = self.lstm(packed)
-    return self.head(hidden[-1])
+    _, hidden = self.recurrent(packed)
+    if self.model_type == 'lstm':
+      hidden = hidden[0]
+    if self.bidirectional:
+      final_hidden = torch.cat([hidden[-2], hidden[-1]], dim=1)
+    else:
+      final_hidden = hidden[-1]
+    return self.head(final_hidden)
 
 
 def run_epoch(
@@ -288,7 +331,11 @@ def main() -> None:
   normal_index = int(label_map.get('normal', 0))
 
   feature_mean, feature_std = compute_feature_stats(train_samples, args.max_frames)
-  class_weights = make_class_weights(train_samples, num_classes)
+  class_weights = (
+    [1.0] * num_classes
+    if args.disable_class_weights
+    else make_class_weights(train_samples, num_classes, power=args.class_weight_power)
+  )
 
   train_dataset = TemporalSequenceDataset(train_samples, args.max_frames, feature_mean, feature_std)
   val_dataset = TemporalSequenceDataset(val_samples, args.max_frames, feature_mean, feature_std)
@@ -315,7 +362,15 @@ def main() -> None:
   )
 
   device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-  model = LSTMClassifier(feature_dim, args.hidden_size, num_classes).to(device)
+  model = TemporalClassifier(
+    feature_dim,
+    args.hidden_size,
+    num_classes,
+    model_type=args.model_type,
+    num_layers=args.num_layers,
+    bidirectional=args.bidirectional,
+    dropout=args.dropout,
+  ).to(device)
   optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
   criterion = nn.CrossEntropyLoss(weight=torch.tensor(class_weights, dtype=torch.float32, device=device))
 
@@ -370,11 +425,17 @@ def main() -> None:
     'max_frames': args.max_frames,
     'epochs': args.epochs,
     'hidden_size': args.hidden_size,
+    'model_type': args.model_type,
+    'num_layers': args.num_layers,
+    'bidirectional': args.bidirectional,
+    'dropout': args.dropout,
     'learning_rate': args.learning_rate,
     'weight_decay': args.weight_decay,
     'feature_mean': feature_mean,
     'feature_std': feature_std,
     'class_weights': class_weights,
+    'disable_class_weights': args.disable_class_weights,
+    'class_weight_power': args.class_weight_power,
     'best_val_accuracy': best_val_accuracy,
     'val_accuracy_thresholded': tuned_val_accuracy,
     'val_macro_f1_thresholded': tuned_val_macro_f1,

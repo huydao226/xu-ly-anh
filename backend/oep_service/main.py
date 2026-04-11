@@ -24,7 +24,9 @@ from oep_service.temporal import (
   decode_image,
   detect_device,
   extract_frame_features,
+  frontal_normal_override,
   load_model_bundle,
+  override_probabilities,
   predict_sequence,
 )
 
@@ -114,7 +116,11 @@ def analyze_session_frame(session_id: str, payload: FrameAnalyzeRequest) -> OepF
     if device_active:
       prediction_label = 'device'
       confidence = max(round(device_detection.confidence, 4), session.last_device_confidence)
-      probabilities = [{'label': 'device', 'confidence': confidence}, *probabilities]
+      probabilities = override_probabilities(
+        probabilities,
+        override_label='device',
+        override_confidence=confidence,
+      )
       status_text = f'Device rule triggered ({confidence:.2%})'
     override_label, override_confidence, adjusted_probabilities = absence_override(
       bundle=features,
@@ -127,7 +133,19 @@ def analyze_session_frame(session_id: str, payload: FrameAnalyzeRequest) -> OepF
       probabilities = adjusted_probabilities
       status_text = f'Absence/offscreen rule triggered after {session.offscreen_streak} frames without a visible face.'
     elif not device_active:
-      status_text = f'OEP monitor v3 predicts {prediction_label} ({confidence:.2%})'
+      frontal_label, frontal_confidence, frontal_probabilities, frontal_status = frontal_normal_override(
+        prediction_label=prediction_label,
+        probabilities=probabilities,
+        sequence=list(session.feature_buffer),
+        bundle=features,
+      )
+      if frontal_label is not None and frontal_confidence is not None:
+        prediction_label = frontal_label
+        confidence = frontal_confidence
+        probabilities = frontal_probabilities
+        status_text = frontal_status or f'OEP monitor v3 predicts {prediction_label} ({confidence:.2%})'
+      else:
+        status_text = f'OEP monitor v3 predicts {prediction_label} ({confidence:.2%})'
     session.last_prediction = prediction_label
     session.last_confidence = round(confidence, 4)
     session.last_probabilities = probabilities

@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980">
+  <defs>
+    <style>
+      .title { font: 700 30px Arial, sans-serif; fill: #17324d; }
+      .subtitle { font: 600 18px Arial, sans-serif; fill: #35516b; }
+      .label { font: 700 18px Arial, sans-serif; fill: #18324a; }
+      .body { font: 500 15px Arial, sans-serif; fill: #28465f; }
+      .small { font: 500 14px Arial, sans-serif; fill: #37546c; }
+      .box { rx: 18; ry: 18; stroke-width: 2.5; }
+      .blue { fill: #e9f4ff; stroke: #5b9bd5; }
+      .green { fill: #ebfaf1; stroke: #52b788; }
+      .orange { fill: #fff3e6; stroke: #f4a261; }
+      .red { fill: #fff0f1; stroke: #e76f51; }
+      .violet { fill: #f5f0ff; stroke: #8b5cf6; }
+      .gray { fill: #f4f6f8; stroke: #8da2b8; }
+      .arrow { stroke: #496581; stroke-width: 3; fill: none; marker-end: url(#arrowhead); }
+      .dashed { stroke-dasharray: 10 8; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <polygon points="0 0, 10 4, 0 8" fill="#496581"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1600" height="980" fill="#ffffff"/>
+  <text x="70" y="60" class="title">OEP Monitor v3 - Block Diagram</text>
+  <text x="70" y="92" class="subtitle">Single-camera experiment flow: frame input, temporal buffer, OEP model, YOLO override, result merge, UI output</text>
+
+  <rect class="box blue" x="70" y="150" width="250" height="110"/>
+  <text x="100" y="190" class="label">1. Input</text>
+  <text x="100" y="220" class="body">Laptop webcam frame</text>
+  <text x="100" y="245" class="small">Base64 image from frontend</text>
+
+  <rect class="box blue" x="390" y="150" width="270" height="110"/>
+  <text x="420" y="190" class="label">2. Frame Preprocess</text>
+  <text x="420" y="220" class="body">Decode + resize to width 320</text>
+  <text x="420" y="245" class="small">Convert to grayscale</text>
+
+  <rect class="box green" x="740" y="120" width="320" height="170"/>
+  <text x="770" y="160" class="label">3. Feature Extractor</text>
+  <text x="770" y="190" class="body">Build 19 features per frame</text>
+  <text x="770" y="220" class="small">brightness, motion, edge density</text>
+  <text x="770" y="242" class="small">face, eyes, yaw/pitch proxy</text>
+  <text x="770" y="264" class="small">upper-body, face-body relation</text>
+
+  <rect class="box violet" x="1120" y="120" width="340" height="170"/>
+  <text x="1150" y="160" class="label">4. Temporal Buffer</text>
+  <text x="1150" y="190" class="body">Deque of recent frame features</text>
+  <text x="1150" y="220" class="small">Max length: 16 frames</text>
+  <text x="1150" y="242" class="small">Predict when buffer has at least 8 frames</text>
+  <text x="1150" y="264" class="small">Each new frame updates the sequence</text>
+
+  <rect class="box violet" x="1120" y="370" width="340" height="170"/>
+  <text x="1150" y="410" class="label">5. OEP Temporal Model</text>
+  <text x="1150" y="440" class="body">LSTM: oep_webcam_monitor_v3</text>
+  <text x="1150" y="470" class="small">Input: sequence of 19-dim vectors</text>
+  <text x="1150" y="492" class="small">Output: normal / suspicious_action / device</text>
+  <text x="1150" y="514" class="small">Apply threshold to suppress weak non-normal predictions</text>
+
+  <rect class="box orange" x="740" y="390" width="300" height="130"/>
+  <text x="770" y="430" class="label">6. YOLO Runtime Branch</text>
+  <text x="770" y="460" class="body">Detect phone / laptop</text>
+  <text x="770" y="485" class="small">Confidence threshold: 0.7</text>
+  <text x="770" y="507" class="small">Device hold: 12 frames</text>
+
+  <rect class="box red" x="380" y="390" width="280" height="130"/>
+  <text x="410" y="430" class="label">7. Absence Rule</text>
+  <text x="410" y="460" class="body">No face + no upper-body</text>
+  <text x="410" y="485" class="small">Offscreen streak threshold: 6</text>
+  <text x="410" y="507" class="small">Overrides only when device is not active</text>
+
+  <rect class="box gray" x="760" y="640" width="290" height="150"/>
+  <text x="790" y="680" class="label">8. Result Merger</text>
+  <text x="790" y="710" class="body">Priority order</text>
+  <text x="790" y="738" class="small">1. device</text>
+  <text x="790" y="760" class="small">2. absence/offscreen</text>
+  <text x="790" y="782" class="small">3. temporal model label</text>
+
+  <rect class="box blue" x="1120" y="640" width="340" height="150"/>
+  <text x="1150" y="680" class="label">9. Output To UI</text>
+  <text x="1150" y="710" class="body">prediction_label + confidence</text>
+  <text x="1150" y="738" class="small">probabilities, annotated_frame</text>
+  <text x="1150" y="760" class="small">status_text, features, session summary</text>
+
+  <rect class="box green" x="1120" y="850" width="340" height="90"/>
+  <text x="1150" y="890" class="label">10. Demo Screen</text>
+  <text x="1150" y="918" class="body">Normal / Suspicious / Device / Absence</text>
+
+  <path class="arrow" d="M320 205 L390 205"/>
+  <path class="arrow" d="M660 205 L740 205"/>
+  <path class="arrow" d="M1060 205 L1120 205"/>
+  <path class="arrow" d="M1290 290 L1290 370"/>
+
+  <path class="arrow" d="M900 290 L900 390"/>
+  <path class="arrow" d="M740 455 L660 455"/>
+  <path class="arrow dashed" d="M900 520 L900 640"/>
+  <path class="arrow dashed" d="M520 520 L760 700"/>
+  <path class="arrow dashed" d="M1040 455 L1120 455"/>
+  <path class="arrow dashed" d="M1040 455 L1040 700 L1050 700"/>
+
+  <path class="arrow" d="M1050 715 L1120 715"/>
+  <path class="arrow" d="M1290 790 L1290 850"/>
+
+  <text x="600" y="555" class="small">absence/offscreen override</text>
+  <text x="930" y="610" class="small">merge with YOLO/device state</text>
+</svg>

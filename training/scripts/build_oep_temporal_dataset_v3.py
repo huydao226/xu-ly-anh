@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import random
 import sys
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,11 +21,12 @@ from oep_service.feature_extractor import FRAME_WIDTH, extract_frame_features, f
 
 DEFAULT_SEGMENTS_CSV = REPO_ROOT / 'training' / 'data' / 'external' / 'oep_multiview' / 'notes' / 'oep_webcam_segments.csv'
 DEFAULT_OUTPUT = REPO_ROOT / 'training' / 'data' / 'processed' / 'oep_webcam_temporal_v3.jsonl'
+DEFAULT_OEP_ROOT = REPO_ROOT / 'training' / 'data' / 'external' / 'oep_multiview' / 'raw' / 'OEP database'
 LABEL_MAP_V3 = {
   'normal': 'normal',
   'type_1': 'suspicious_action',
   'type_2': 'suspicious_action',
-  'type_3': 'suspicious_action',
+  'type_3': 'normal',
   'type_5': 'device',
   'type_6': 'suspicious_action',
 }
@@ -42,6 +45,7 @@ def parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description='Build the enhanced OEP webcam temporal dataset for monitor v3.')
   parser.add_argument('--segments-csv', type=Path, default=DEFAULT_SEGMENTS_CSV)
   parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
+  parser.add_argument('--oep-root', type=Path, default=DEFAULT_OEP_ROOT)
   parser.add_argument('--frames-per-sample', type=int, default=16)
   parser.add_argument('--frame-width', type=int, default=FRAME_WIDTH)
   parser.add_argument('--seed', type=int, default=42)
@@ -69,22 +73,62 @@ def load_segment_rows(path: Path) -> list[dict[str, str]]:
     return [dict(row) for row in reader]
 
 
-def assign_subject_splits(subject_ids: list[str], seed: int) -> dict[str, str]:
-  unique_subjects = sorted(set(subject_ids))
+def assign_subject_splits(rows: list[dict[str, str]], seed: int) -> dict[str, str]:
+  unique_subjects = sorted({row['subject_id'] for row in rows})
   rng = random.Random(seed)
-  rng.shuffle(unique_subjects)
   total = len(unique_subjects)
-  train_cutoff = max(1, int(total * 0.7))
-  val_cutoff = max(train_cutoff + 1, int(total * 0.85))
-  split_map: dict[str, str] = {}
-  for index, subject_id in enumerate(unique_subjects):
-    if index < train_cutoff:
-      split = 'train'
-    elif index < val_cutoff:
-      split = 'val'
+  val_count = max(1, int(math.ceil(total * 0.15)))
+  test_count = max(1, int(math.ceil(total * 0.15)))
+  train_count = max(1, total - val_count - test_count)
+  if train_count + val_count + test_count > total:
+    train_count = max(1, total - val_count - test_count)
+
+  labels_by_subject: dict[str, set[str]] = defaultdict(set)
+  for row in rows:
+    labels_by_subject[row['subject_id']].add(remap_label(row['cheat_type_name']))
+
+  device_subjects = sorted(subject for subject, labels in labels_by_subject.items() if 'device' in labels)
+  non_device_subjects = sorted(subject for subject in unique_subjects if subject not in set(device_subjects))
+  rng.shuffle(device_subjects)
+  rng.shuffle(non_device_subjects)
+
+  val_subjects: list[str] = []
+  test_subjects: list[str] = []
+  train_subjects: list[str] = []
+
+  if device_subjects:
+    val_subjects.append(device_subjects.pop())
+  if device_subjects:
+    test_subjects.append(device_subjects.pop())
+  train_subjects.extend(device_subjects)
+
+  def fill_bucket(bucket: list[str], target_size: int) -> None:
+    while len(bucket) < target_size and non_device_subjects:
+      bucket.append(non_device_subjects.pop())
+
+  fill_bucket(val_subjects, val_count)
+  fill_bucket(test_subjects, test_count)
+  train_subjects.extend(non_device_subjects)
+
+  # Safety fallback if the rounded split sizes leave a bucket oversized or undersized.
+  while len(train_subjects) > train_count:
+    if len(val_subjects) < val_count:
+      val_subjects.append(train_subjects.pop())
+    elif len(test_subjects) < test_count:
+      test_subjects.append(train_subjects.pop())
     else:
-      split = 'test'
-    split_map[subject_id] = split
+      break
+
+  split_map: dict[str, str] = {}
+  for subject_id in train_subjects:
+    split_map[subject_id] = 'train'
+  for subject_id in val_subjects:
+    split_map[subject_id] = 'val'
+  for subject_id in test_subjects:
+    split_map[subject_id] = 'test'
+
+  for subject_id in unique_subjects:
+    split_map.setdefault(subject_id, 'train')
   return split_map
 
 
@@ -98,6 +142,26 @@ def open_video(path: Path) -> VideoInfo:
     fps = 30.0
   duration_seconds = frame_count / fps if frame_count > 0 else 0.0
   return VideoInfo(path=path, capture=capture, fps=fps, frame_count=frame_count, duration_seconds=duration_seconds)
+
+
+def resolve_oep_video_path(raw_path: str, subject_id: str, oep_root: Path) -> Path:
+  candidate = Path(raw_path)
+  if candidate.exists():
+    return candidate
+
+  normalized = raw_path.replace('\\', '/')
+  filename = normalized.split('/')[-1]
+  subject_dir = oep_root / subject_id
+  subject_candidate = subject_dir / filename
+  if subject_candidate.exists():
+    return subject_candidate
+
+  if filename:
+    matches = sorted(subject_dir.glob(f'*{Path(filename).suffix}'))
+    if len(matches) == 1:
+      return matches[0]
+
+  raise FileNotFoundError(f'Unable to resolve OEP video path for subject {subject_id}: {raw_path}')
 
 
 def evenly_spaced_timestamps(start_seconds: float, end_seconds: float, count: int) -> list[float]:
@@ -190,12 +254,20 @@ def main() -> None:
   args = parse_args()
   segments_csv = args.segments_csv.resolve()
   output_path = args.output.resolve()
+  oep_root = args.oep_root.resolve()
   rows = load_segment_rows(segments_csv)
   if not rows:
     raise ValueError(f'No OEP segment rows found in {segments_csv}')
+  normalized_rows = [
+    {
+      **row,
+      'webcam_video_path': str(resolve_oep_video_path(row['webcam_video_path'], row['subject_id'], oep_root)),
+    }
+    for row in rows
+  ]
 
   output_path.parent.mkdir(parents=True, exist_ok=True)
-  split_map = assign_subject_splits([row['subject_id'] for row in rows], args.seed)
+  split_map = assign_subject_splits(normalized_rows, args.seed)
   names = feature_names()
   video_cache: dict[Path, VideoInfo] = {}
 
@@ -208,12 +280,12 @@ def main() -> None:
     return video
 
   normal_rows = infer_normal_segments(
-    rows=rows,
-    video_cache={Path(row['webcam_video_path']): get_video(row['webcam_video_path']) for row in rows},
+    rows=normalized_rows,
+    video_cache={Path(row['webcam_video_path']): get_video(row['webcam_video_path']) for row in normalized_rows},
     min_gap_seconds=args.min_normal_gap_seconds,
     normal_window_seconds=args.normal_window_seconds,
   )
-  all_rows = rows + normal_rows
+  all_rows = normalized_rows + normal_rows
   if args.max_segments > 0:
     all_rows = all_rows[: args.max_segments]
 
@@ -260,7 +332,7 @@ def main() -> None:
     'source_to_target_labels': LABEL_MAP_V3,
     'subject_split_map': split_map,
     'sample_count': len(all_rows),
-    'oep_segment_count': len(rows),
+    'oep_segment_count': len(normalized_rows),
     'normal_gap_sample_count': len(normal_rows),
   }
   (output_path.parent / f'{output_path.stem}_summary.json').write_text(
@@ -273,7 +345,7 @@ def main() -> None:
   print(f'- output: {output_path}')
   print(f'- labels: {remapped_labels}')
   print(f'- feature_dim: {len(names)}')
-  print(f'- oep labeled segments: {len(rows)}')
+  print(f'- oep labeled segments: {len(normalized_rows)}')
   print(f'- inferred normal samples: {len(normal_rows)}')
   print(f'- total samples: {len(all_rows)}')
 

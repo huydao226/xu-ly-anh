@@ -26,33 +26,83 @@ MIN_FRAMES_TO_PREDICT = 8
 OFFSCREEN_STREAK_THRESHOLD = 6
 LIVE_NON_NORMAL_THRESHOLD_FLOOR = 0.55
 DEVICE_CONFIDENCE_THRESHOLD = 0.7
-DEVICE_HOLD_FRAMES = 8
+DEVICE_HOLD_FRAMES = 12
 DEFAULT_HIDDEN_SIZE = 64
+IDX_MOTION_SCORE = 1
+IDX_FACE_PRESENT = 3
+IDX_FACE_AREA_RATIO = 4
+IDX_FACE_CENTER_X = 5
+IDX_FACE_CENTER_Y = 6
+IDX_EYE_PAIR_PRESENT = 7
+IDX_YAW_PROXY = 9
+IDX_PITCH_PROXY = 10
+IDX_MULTIPLE_FACES = 13
+IDX_UPPERBODY_PRESENT = 14
+IDX_UPPERBODY_AREA_RATIO = 15
+IDX_UPPERBODY_CENTER_X = 16
+IDX_UPPERBODY_CENTER_Y = 17
 _YOLO_LOCK = threading.Lock()
 _YOLO_MODEL: YOLO | None = None
 _YOLO_ERROR: str | None = None
 
 
-class LSTMClassifier(nn.Module):
-  def __init__(self, input_size: int, hidden_size: int, num_classes: int) -> None:
+class TemporalClassifier(nn.Module):
+  def __init__(
+    self,
+    input_size: int,
+    hidden_size: int,
+    num_classes: int,
+    *,
+    model_type: str = 'lstm',
+    num_layers: int = 1,
+    bidirectional: bool = False,
+    dropout: float = 0.2,
+  ) -> None:
     super().__init__()
-    self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, batch_first=True)
+    recurrent_dropout = dropout if num_layers > 1 else 0.0
+    if model_type == 'gru':
+      self.recurrent = nn.GRU(
+        input_size=input_size,
+        hidden_size=hidden_size,
+        batch_first=True,
+        num_layers=num_layers,
+        dropout=recurrent_dropout,
+        bidirectional=bidirectional,
+      )
+    else:
+      self.recurrent = nn.LSTM(
+        input_size=input_size,
+        hidden_size=hidden_size,
+        batch_first=True,
+        num_layers=num_layers,
+        dropout=recurrent_dropout,
+        bidirectional=bidirectional,
+      )
+    head_input_size = hidden_size * (2 if bidirectional else 1)
+    self.model_type = model_type
+    self.bidirectional = bidirectional
     self.head = nn.Sequential(
-      nn.Linear(hidden_size, hidden_size),
+      nn.Linear(head_input_size, hidden_size),
       nn.ReLU(),
-      nn.Dropout(p=0.2),
+      nn.Dropout(p=dropout),
       nn.Linear(hidden_size, num_classes),
     )
 
   def forward(self, features: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
     packed = nn.utils.rnn.pack_padded_sequence(features, lengths.cpu(), batch_first=True, enforce_sorted=False)
-    _, (hidden, _) = self.lstm(packed)
-    return self.head(hidden[-1])
+    _, hidden = self.recurrent(packed)
+    if self.model_type == 'lstm':
+      hidden = hidden[0]
+    if self.bidirectional:
+      final_hidden = torch.cat([hidden[-2], hidden[-1]], dim=1)
+    else:
+      final_hidden = hidden[-1]
+    return self.head(final_hidden)
 
 
 @dataclass(frozen=True)
 class ModelBundle:
-  model: LSTMClassifier
+  model: TemporalClassifier
   labels: list[str]
   feature_dim: int
   feature_mean: list[float]
@@ -93,12 +143,24 @@ def load_model_bundle() -> ModelBundle:
   labels = [label for label, _ in sorted(labels_by_id.items(), key=lambda item: int(item[1]))]
   feature_dim = int(metrics.get('feature_dim', 18))
   hidden_size = int(metrics.get('hidden_size', DEFAULT_HIDDEN_SIZE) or DEFAULT_HIDDEN_SIZE)
+  model_type = str(metrics.get('model_type', 'lstm'))
+  num_layers = int(metrics.get('num_layers', 1) or 1)
+  bidirectional = bool(metrics.get('bidirectional', False))
+  dropout = float(metrics.get('dropout', 0.2))
   feature_mean = [float(value) for value in metrics.get('feature_mean', [0.0] * feature_dim)]
   feature_std = [max(float(value), 1e-6) for value in metrics.get('feature_std', [1.0] * feature_dim)]
   non_normal_threshold = max(float(metrics.get('non_normal_threshold', 0.5)), LIVE_NON_NORMAL_THRESHOLD_FLOOR)
   normal_index = int(labels_by_id.get('normal', 0))
 
-  model = LSTMClassifier(feature_dim, hidden_size, len(labels))
+  model = TemporalClassifier(
+    feature_dim,
+    hidden_size,
+    len(labels),
+    model_type=model_type,
+    num_layers=num_layers,
+    bidirectional=bidirectional,
+    dropout=dropout,
+  )
   state_dict = torch.load(MODEL_PATH, map_location='cpu')
   model.load_state_dict(state_dict)
   model.eval()
@@ -141,7 +203,7 @@ def detect_device(image: np.ndarray) -> DeviceDetection:
       class_id = int(box.cls.item())
       label = str(names.get(class_id, class_id)).lower()
       confidence = float(box.conf.item())
-      if label not in {'cell phone', 'phone', 'laptop'}:
+      if label not in {'cell phone', 'phone'}:
         continue
       if confidence > best_confidence:
         x1, y1, x2, y2 = (int(value) for value in box.xyxy[0].tolist())
@@ -175,6 +237,100 @@ def predict_sequence(bundle: ModelBundle, features: list[list[float]]) -> tuple[
   return bundle.labels[top_index], selected_confidence, scores
 
 
+def override_probabilities(
+  probabilities: list[dict[str, float]],
+  *,
+  override_label: str,
+  override_confidence: float,
+) -> list[dict[str, float]]:
+  target_confidence = round(min(max(float(override_confidence), 0.0), 0.9999), 4)
+  remaining = [
+    {'label': str(item['label']), 'confidence': max(float(item['confidence']), 0.0)}
+    for item in probabilities
+    if str(item['label']) != override_label
+  ]
+  remaining_budget = max(0.0, 1.0 - target_confidence)
+  remaining_total = sum(item['confidence'] for item in remaining)
+  adjusted = [{'label': override_label, 'confidence': target_confidence}]
+  for item in remaining:
+    scaled = 0.0 if remaining_total <= 1e-8 else remaining_budget * item['confidence'] / remaining_total
+    adjusted.append({'label': item['label'], 'confidence': round(scaled, 4)})
+  adjusted.sort(key=lambda item: item['confidence'], reverse=True)
+  return adjusted
+
+
+def frontal_normal_override(
+  *,
+  prediction_label: str,
+  probabilities: list[dict[str, float]],
+  sequence: list[list[float]],
+  bundle: FrameFeatureBundle,
+) -> tuple[str | None, float | None, list[dict[str, float]], str | None]:
+  if prediction_label != 'suspicious_action':
+    return None, None, probabilities, None
+  if not bundle.face_present and not bundle.pose_present:
+    return None, None, probabilities, None
+  if not sequence:
+    return None, None, probabilities, None
+
+  recent = sequence[-min(len(sequence), 6) :]
+  avg = [sum(values) / float(len(values)) for values in zip(*recent)]
+  face_ratio = avg[IDX_FACE_PRESENT]
+  face_area = avg[IDX_FACE_AREA_RATIO]
+  face_center_x = avg[IDX_FACE_CENTER_X]
+  face_center_y = avg[IDX_FACE_CENTER_Y]
+  eye_ratio = avg[IDX_EYE_PAIR_PRESENT]
+  yaw_proxy = avg[IDX_YAW_PROXY]
+  pitch_proxy = avg[IDX_PITCH_PROXY]
+  multiple_faces = avg[IDX_MULTIPLE_FACES]
+  upperbody_ratio = avg[IDX_UPPERBODY_PRESENT]
+  upperbody_area = avg[IDX_UPPERBODY_AREA_RATIO]
+  upperbody_center_x = avg[IDX_UPPERBODY_CENTER_X]
+  upperbody_center_y = avg[IDX_UPPERBODY_CENTER_Y]
+  motion_score = avg[IDX_MOTION_SCORE]
+
+  stable_face = (
+    face_ratio >= 0.7
+    and face_area >= 0.015
+    and 0.28 <= face_center_x <= 0.72
+    and 0.18 <= face_center_y <= 0.72
+    and multiple_faces < 0.2
+    and motion_score <= 0.08
+  )
+  frontal_eye_alignment = eye_ratio >= 0.3 and abs(yaw_proxy) <= 0.12 and 0.18 <= pitch_proxy <= 0.55
+  stable_centered_face = eye_ratio < 0.3 and abs(face_center_x - 0.5) <= 0.18 and motion_score <= 0.05
+  stable_pose_only = (
+    face_ratio < 0.35
+    and upperbody_ratio >= 0.7
+    and 0.04 <= upperbody_area <= 0.22
+    and 0.32 <= upperbody_center_x <= 0.68
+    and 0.15 <= upperbody_center_y <= 0.62
+    and multiple_faces < 0.2
+    and motion_score <= 0.05
+  )
+  if not ((stable_face and (frontal_eye_alignment or stable_centered_face)) or stable_pose_only):
+    return None, None, probabilities, None
+
+  suspicious_confidence = next(
+    (float(item['confidence']) for item in probabilities if item['label'] == 'suspicious_action'),
+    0.0,
+  )
+  normal_confidence = next(
+    (float(item['confidence']) for item in probabilities if item['label'] == 'normal'),
+    0.0,
+  )
+  if suspicious_confidence > 0.97:
+    return None, None, probabilities, None
+
+  upgraded_normal = round(max(normal_confidence, 0.72 if (stable_face and frontal_eye_alignment) else 0.62), 4)
+  adjusted = override_probabilities(
+    probabilities,
+    override_label='normal',
+    override_confidence=upgraded_normal,
+  )
+  return 'normal', upgraded_normal, adjusted, 'Frontal-face guard normalized live prediction.'
+
+
 def absence_override(
   *,
   bundle: FrameFeatureBundle,
@@ -186,9 +342,11 @@ def absence_override(
   if offscreen_streak < OFFSCREEN_STREAK_THRESHOLD:
     return None, None, probabilities
   confidence = round(min(0.99, 0.55 + 0.05 * (offscreen_streak - OFFSCREEN_STREAK_THRESHOLD)), 4)
-  adjusted = [{'label': 'absence/offscreen', 'confidence': confidence}]
-  for item in probabilities:
-    adjusted.append(item)
+  adjusted = override_probabilities(
+    probabilities,
+    override_label='absence/offscreen',
+    override_confidence=confidence,
+  )
   return 'absence/offscreen', confidence, adjusted
 
 
